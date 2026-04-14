@@ -71,10 +71,12 @@ export async function POST(req: Request) {
     systemPrompt += `\n\n## 過去の相談履歴からの参考情報:\n${ragContext}\n\nこの情報を参考に、継続性のあるサポートを提供してください。`
   }
 
+  const modelMessages = await convertToModelMessages(messages)
+
   const result = streamText({
     model: anthropic('claude-sonnet-4-6'),
     system: systemPrompt,
-    messages: convertToModelMessages(messages),
+    messages: modelMessages,
     abortSignal: req.signal,
   })
 
