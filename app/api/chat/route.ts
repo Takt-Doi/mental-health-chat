@@ -1,9 +1,4 @@
-import {
-  consumeStream,
-  convertToModelMessages,
-  streamText,
-  UIMessage,
-} from 'ai'
+import { convertToModelMessages, streamText, UIMessage } from 'ai'
 import { anthropic } from '@ai-sdk/anthropic'
 import { cookies } from 'next/headers'
 import { isValidSession } from '@/lib/auth'
@@ -57,7 +52,7 @@ interface ChatRequest {
 }
 
 export async function POST(req: Request) {
-  // サーバー側セッション検証（2重チェック）
+  // セッション検証
   const cookieStore = await cookies()
   const session = cookieStore.get('mh-session')
   if (!session || !isValidSession(session.value)) {
@@ -66,13 +61,12 @@ export async function POST(req: Request) {
 
   const { messages, category, ragContext }: ChatRequest = await req.json()
 
-  // Build system prompt with optional RAG context
   let systemPrompt = CBT_SYSTEM_PROMPT
-  
+
   if (category) {
     systemPrompt += `\n\n## 現在の相談カテゴリ: ${category}\nこのカテゴリに特化したサポートを心がけてください。`
   }
-  
+
   if (ragContext) {
     systemPrompt += `\n\n## 過去の相談履歴からの参考情報:\n${ragContext}\n\nこの情報を参考に、継続性のあるサポートを提供してください。`
   }
@@ -80,17 +74,9 @@ export async function POST(req: Request) {
   const result = streamText({
     model: anthropic('claude-sonnet-4-6'),
     system: systemPrompt,
-    messages: await convertToModelMessages(messages),
+    messages: convertToModelMessages(messages),
     abortSignal: req.signal,
   })
 
-  return result.toUIMessageStreamResponse({
-    originalMessages: messages,
-    onFinish: async ({ messages: allMessages, isAborted }) => {
-      if (isAborted) return
-      // Future: Save conversation history for RAG
-      console.log('[v0] Conversation completed, messages:', allMessages.length)
-    },
-    consumeSseStream: consumeStream,
-  })
+  return result.toUIMessageStreamResponse()
 }
