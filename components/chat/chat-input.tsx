@@ -13,7 +13,7 @@ interface ChatInputProps {
 }
 
 export function ChatInput({ onSend, disabled, placeholder = 'メッセージを入力...' }: ChatInputProps) {
-  const [inputMode, setInputMode] = useState<'voice' | 'text'>('text')
+  const [mode, setMode] = useState<'text' | 'voice'>('text')
   const [textInput, setTextInput] = useState('')
   const textareaRef = useRef<HTMLTextAreaElement>(null)
 
@@ -21,15 +21,14 @@ export function ChatInput({ onSend, disabled, placeholder = 'メッセージを�
     isListening,
     isSupported,
     transcript,
+    interimTranscript,
+    voiceState,
     startListening,
     stopListening,
-    resetTranscript,
+    clearTranscript,
+    setTranscript,
     error,
-  } = useVoiceInput({
-    onResult: () => {
-      // Append to existing text
-    },
-  })
+  } = useVoiceInput()
 
   // Auto-resize textarea
   useEffect(() => {
@@ -39,16 +38,18 @@ export function ChatInput({ onSend, disabled, placeholder = 'メッセージを�
     }
   }, [textInput])
 
+  const currentMessage = mode === 'voice' ? transcript : textInput
+  const hasContent = currentMessage.trim().length > 0
+
   const handleSend = () => {
-    const messageToSend = inputMode === 'voice' ? transcript : textInput
-    if (messageToSend.trim() && !disabled) {
-      onSend(messageToSend.trim())
-      if (inputMode === 'voice') {
-        resetTranscript()
-        stopListening()
-      } else {
-        setTextInput('')
-      }
+    const text = currentMessage.trim()
+    if (!text || disabled) return
+    onSend(text)
+    if (mode === 'voice') {
+      stopListening()
+      clearTranscript()
+    } else {
+      setTextInput('')
     }
   }
 
@@ -60,83 +61,41 @@ export function ChatInput({ onSend, disabled, placeholder = 'メッセージを�
   }
 
   const toggleVoice = () => {
-    if (isListening) {
+    if (voiceState === 'listening') {
       stopListening()
     } else {
-      resetTranscript()
       startListening()
     }
   }
 
-  const currentMessage = inputMode === 'voice' ? transcript : textInput
-
   return (
     <div className="space-y-3">
-      {/* Voice mode visualization */}
-      {inputMode === 'voice' && (
-        <div className="space-y-3">
-          {/* Voice button */}
-          <div className="flex flex-col items-center justify-center py-4">
-            <button
-              onClick={toggleVoice}
-              disabled={disabled || !isSupported}
-              className={cn(
-                'relative w-16 h-16 rounded-full flex items-center justify-center transition-all',
-                isListening
-                  ? 'bg-primary text-primary-foreground glow-effect'
-                  : 'bg-primary/10 text-primary hover:bg-primary/20',
-                disabled && 'opacity-50 cursor-not-allowed'
-              )}
-            >
-              {isListening && (
-                <>
-                  <span className="absolute inset-0 rounded-full bg-primary/30 voice-pulse" />
-                  <span className="absolute inset-0 rounded-full bg-primary/20 voice-pulse" style={{ animationDelay: '0.5s' }} />
-                </>
-              )}
-              {isListening ? (
-                <MicOff className="w-6 h-6 relative z-10" />
-              ) : (
-                <Mic className="w-6 h-6" />
-              )}
-            </button>
-            <p className="text-xs text-muted-foreground mt-2">
-              {isListening ? '話しかけてください...' : 'タップして話す'}
-            </p>
-          </div>
+      {/* Mode toggle */}
+      <div className="flex gap-2">
+        <Button
+          variant={mode === 'text' ? 'default' : 'ghost'}
+          size="sm"
+          onClick={() => { setMode('text'); stopListening() }}
+          className="gap-2 rounded-full text-xs h-8"
+        >
+          <Keyboard className="w-3.5 h-3.5" />
+          キーボード
+        </Button>
+        {isSupported && (
+          <Button
+            variant={mode === 'voice' ? 'default' : 'ghost'}
+            size="sm"
+            onClick={() => setMode('voice')}
+            className="gap-2 rounded-full text-xs h-8"
+          >
+            <Mic className="w-3.5 h-3.5" />
+            音声入力
+          </Button>
+        )}
+      </div>
 
-          {/* Transcript display */}
-          {transcript && (
-            <div className="glass-panel rounded-xl p-3">
-              <p className="text-sm">{transcript}</p>
-            </div>
-          )}
-
-          {/* Send button for voice mode */}
-          {transcript && (
-            <div className="flex justify-center">
-              <Button
-                onClick={handleSend}
-                disabled={disabled || !transcript.trim()}
-                className="gap-2 rounded-full px-6"
-              >
-                <Send className="w-4 h-4" />
-                送信
-              </Button>
-            </div>
-          )}
-
-          {/* Error display */}
-          {error && (
-            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-2 text-center">
-              <p className="text-xs text-destructive">{error}</p>
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Text input area */}
-      {inputMode === 'text' && (
+      {/* Text mode */}
+      {mode === 'text' && (
         <div className="relative flex items-end gap-2">
           <div className="flex-1 relative">
             <textarea
@@ -148,34 +107,18 @@ export function ChatInput({ onSend, disabled, placeholder = 'メッセージを�
               disabled={disabled}
               rows={1}
               className={cn(
-                'w-full resize-none rounded-2xl border-0 glass-panel px-4 py-3 pr-12',
+                'w-full resize-none rounded-2xl border-0 glass-panel px-4 py-3',
                 'text-sm leading-relaxed placeholder:text-muted-foreground',
                 'focus:outline-none focus:ring-2 focus:ring-primary/50',
                 'disabled:cursor-not-allowed disabled:opacity-50',
                 'min-h-[48px] max-h-[120px]'
               )}
             />
-            
-            {/* Voice toggle inside input */}
-            {isSupported && (
-              <button
-                type="button"
-                onClick={() => {
-                  setInputMode('voice')
-                  startListening()
-                }}
-                className="absolute right-12 bottom-3 p-1.5 rounded-full text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
-              >
-                <Mic className="w-4 h-4" />
-              </button>
-            )}
           </div>
-
-          {/* Send button */}
           <Button
             size="icon"
             onClick={handleSend}
-            disabled={disabled || !textInput.trim()}
+            disabled={disabled || !hasContent}
             className="rounded-full h-12 w-12 bg-primary hover:bg-primary/90 flex-shrink-0"
           >
             <Send className="w-5 h-5" />
@@ -184,36 +127,96 @@ export function ChatInput({ onSend, disabled, placeholder = 'メッセージを�
         </div>
       )}
 
-      {/* Mode toggle */}
-      <div className="flex items-center justify-center gap-2">
-        <Button
-          variant={inputMode === 'voice' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => setInputMode('voice')}
-          disabled={!isSupported}
-          className="gap-2 rounded-full text-xs h-8"
-        >
-          <Mic className="w-3.5 h-3.5" />
-          音声
-        </Button>
-        <Button
-          variant={inputMode === 'text' ? 'default' : 'ghost'}
-          size="sm"
-          onClick={() => setInputMode('text')}
-          className="gap-2 rounded-full text-xs h-8"
-        >
-          <Keyboard className="w-3.5 h-3.5" />
-          テキスト
-        </Button>
-      </div>
+      {/* Voice mode */}
+      {mode === 'voice' && (
+        <div className="flex flex-col gap-3">
+          {/* Mic + send controls */}
+          <div className="flex items-center gap-3">
+            <button
+              onClick={toggleVoice}
+              disabled={disabled}
+              className={cn(
+                'relative flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-colors disabled:opacity-50',
+                voiceState === 'listening'
+                  ? 'bg-red-500 text-white hover:bg-red-600'
+                  : 'bg-primary/10 text-primary hover:bg-primary/20'
+              )}
+            >
+              {voiceState === 'listening' ? (
+                <>
+                  <MicOff className="w-4 h-4" />
+                  <span>停止</span>
+                  <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full animate-ping" />
+                </>
+              ) : (
+                <>
+                  <Mic className="w-4 h-4" />
+                  <span>{voiceState === 'error' ? 'エラー' : '話す'}</span>
+                </>
+              )}
+            </button>
 
-      {/* Not supported message */}
-      {!isSupported && inputMode === 'voice' && (
-        <div className="text-center">
-          <p className="text-xs text-muted-foreground">
-            お使いのブラウザは音声入力に対応していません
-          </p>
+            <span className="text-xs text-muted-foreground flex-1">
+              {voiceState === 'listening' ? '聞いています...' : ''}
+            </span>
+
+            <Button
+              size="icon"
+              onClick={handleSend}
+              disabled={disabled || !hasContent}
+              className="rounded-full h-11 w-11 bg-primary hover:bg-primary/90 flex-shrink-0"
+            >
+              <Send className="w-4 h-4" />
+              <span className="sr-only">送信</span>
+            </Button>
+          </div>
+
+          {/* Editable transcript area */}
+          <div className="relative">
+            <textarea
+              value={transcript + interimTranscript}
+              onChange={(e) => {
+                // interimTranscript 部分は編集不可 — 確定済みテキストのみ更新
+                const newVal = e.target.value
+                const interimLen = interimTranscript.length
+                setTranscript(interimLen > 0
+                  ? newVal.slice(0, newVal.length - interimLen)
+                  : newVal
+                )
+              }}
+              placeholder="音声認識結果がここに表示されます。誤認識は直接編集できます。"
+              className={cn(
+                'w-full resize-none rounded-2xl border-0 glass-panel px-4 py-3',
+                'text-sm leading-relaxed placeholder:text-muted-foreground',
+                'focus:outline-none focus:ring-2 focus:ring-primary/50',
+                'min-h-[80px] max-h-[120px]'
+              )}
+              rows={3}
+            />
+            {transcript && (
+              <button
+                onClick={clearTranscript}
+                className="absolute top-2 right-3 text-xs text-muted-foreground hover:text-foreground transition-colors"
+              >
+                クリア
+              </button>
+            )}
+          </div>
+
+          {/* Error display */}
+          {error && (
+            <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-2 text-center">
+              <p className="text-xs text-destructive">{error}</p>
+            </div>
+          )}
         </div>
+      )}
+
+      {/* Not supported */}
+      {!isSupported && (
+        <p className="text-xs text-muted-foreground text-center">
+          お使いのブラウザは音声入力に対応していません
+        </p>
       )}
     </div>
   )
