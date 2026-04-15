@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server'
 import type { NextRequest } from 'next/server'
 
 const COOKIE_NAME = 'mh-session'
-const PUBLIC_PATHS = ['/login', '/api/auth']
+const PUBLIC_PATHS = ['/login', '/api/auth', '/api/debug']
 
 /** Web Crypto API（Edge Runtime対応）でHMAC-SHA256を計算 */
 async function hmacHex(secret: string, message: string): Promise<string> {
