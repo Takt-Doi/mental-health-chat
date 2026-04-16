@@ -19,3 +19,7 @@ next.user-config.*
 node_modules
 .next/
 .DS_Store
+
+# RAG knowledge base export (教科書内容 - GitHubアップロード厳禁)
+scripts/counseling_knowledge.json
+counseling_knowledge.json

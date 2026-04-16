@@ -2,6 +2,7 @@ import { convertToModelMessages, streamText, UIMessage } from 'ai'
 import { anthropic } from '@ai-sdk/anthropic'
 import { cookies } from 'next/headers'
 import { isValidSession } from '@/lib/auth'
+import { retrieveTechniqueContext } from '@/lib/rag-service'
 
 export const maxDuration = 60
 
@@ -34,6 +35,7 @@ interface ChatRequest {
   messages: UIMessage[]
   category?: string
   ragContext?: string
+  mood?: number
 }
 
 export async function POST(req: Request) {
@@ -54,6 +56,30 @@ export async function POST(req: Request) {
 
   if (ragContext) {
     systemPrompt += `\n\n## 過去の相談履歴からの参考情報:\n${ragContext}\n\nこの情報を参考に、継続性のあるサポートを提供してください。`
+  }
+
+  // 直近のユーザー発言を使って技法知識をRAG検索（OneDrive未設定時はスキップ）
+  const lastUserText = messages
+    .filter((m) => m.role === 'user')
+    .slice(-2)
+    .map((m) => {
+      if (!Array.isArray(m.parts)) return ''
+      return m.parts
+        .filter((p: { type: string }) => p.type === 'text')
+        .map((p: { type: string; text?: string }) => p.text ?? '')
+        .join(' ')
+    })
+    .join(' ')
+    .trim()
+
+  if (lastUserText) {
+    const techniqueContext = await retrieveTechniqueContext(lastUserText)
+    if (techniqueContext) {
+      systemPrompt +=
+        `\n\n## カウンセリング技法の参考情報（内部メモ・返答には表示しないこと）:\n` +
+        techniqueContext +
+        `\n\nこれらの技法を参考に、相手の状況に合った自然なアプローチを取り入れてください。専門用語はそのまま使わず、自然な会話の言葉に変換してください。`
+    }
   }
 
   const modelMessages = await convertToModelMessages(messages)
