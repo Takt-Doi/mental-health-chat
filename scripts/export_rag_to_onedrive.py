@@ -1,24 +1,22 @@
 """
-ChromaDB → JSON → OneDrive エクスポートスクリプト
-mental-health-chat の RAG 知識ベースを OneDrive に保存する。
+ChromaDB → JSON → SharePoint エクスポートスクリプト
+事業開発部 SharePoint の AI フォルダにアップロードする。
 
 【実行方法】
 cd C:/Users/tdoi/Documents/Claude/ai-counseling-sim/backend
-pip install msal  # 未インストールの場合
-python ../../mental-health-chat/scripts/export_rag_to_onedrive.py \
-  --client-id <AzureADアプリのクライアントID> \
+pip install msal requests  # 未インストールの場合
+python ..\\..\\mental-health-chat\\scripts\\export_rag_to_onedrive.py ^
+  --client-id <AzureADアプリのクライアントID> ^
   --tenant-id <テナントID>
 
-【Azure AD アプリ登録手順（事前準備）】
-1. https://portal.azure.com → Microsoft Entra ID → アプリの登録 → 新規登録
-2. 名前: "mental-health-chat-rag" など任意
-3. サポートされているアカウントの種類: 「この組織ディレクトリのみのアカウント」
-4. リダイレクトURI: 「パブリック クライアント/ネイティブ」→ http://localhost
-5. 登録後 → 認証 → 「パブリック クライアント フローを許可する」→ はい → 保存
-6. APIのアクセス許可 → Microsoft Graph → 委任されたアクセス許可 → Files.ReadWrite + offline_access
-   ※ Files.ReadWrite は「管理者の同意が必要」の列が「いいえ」 → 自分で承認できる
-7. client-id: アプリの「アプリケーション (クライアント) ID」
-8. tenant-id: 「ディレクトリ (テナント) ID」
+【アップロード先】
+  https://arm8769.sharepoint.com/sites/msteams_3eab34_280102
+  Shared Documents/11　（Warm)カウンセリング利用促進/AI/counseling_knowledge.json
+
+【Azure AD アプリ登録確認事項】
+  - 認証 → パブリッククライアントフローを許可する: はい
+  - APIのアクセス許可: Files.ReadWrite (委任) + offline_access
+    ※ 管理者の同意不要
 """
 
 import json
@@ -26,6 +24,13 @@ import sys
 import argparse
 from pathlib import Path
 from datetime import datetime
+
+# ---- アップロード先 SharePoint 設定 --------------------------------
+SHAREPOINT_HOST = "arm8769.sharepoint.com"
+SHAREPOINT_SITE_PATH = "/sites/msteams_3eab34_280102"
+UPLOAD_FOLDER = "11\u3000\uff08Warm\uff09\u30ab\u30a6\u30f3\u30bb\u30ea\u30f3\u30b0\u5229\u7528\u4fc2\u9032/AI"
+# （Warm)カウンセリング利用促進/AI
+FILENAME = "counseling_knowledge.json"
 
 
 def export_chromadb(chroma_path: str, collection_name: str) -> dict:
@@ -53,7 +58,6 @@ def export_chromadb(chroma_path: str, collection_name: str) -> dict:
     total = collection.count()
     print(f"  チャンク総数: {total}")
 
-    # 全チャンクを取得（ベクトルは不要、テキストとメタデータのみ）
     result = collection.get(
         include=["documents", "metadatas"],
         limit=total,
@@ -62,7 +66,7 @@ def export_chromadb(chroma_path: str, collection_name: str) -> dict:
     chunks = []
     for doc, meta in zip(result["documents"], result["metadatas"]):
         text = (doc or "").strip()
-        if len(text) < 50:  # 極端に短いチャンクはスキップ
+        if len(text) < 50:
             continue
         chunks.append({
             "technique": meta.get("technique_category", "カウンセリング一般"),
@@ -80,15 +84,32 @@ def export_chromadb(chroma_path: str, collection_name: str) -> dict:
     }
 
 
+def get_site_id(access_token: str, requests) -> str:
+    """SharePoint サイト ID を Graph API で取得する。"""
+    url = (
+        f"https://graph.microsoft.com/v1.0/sites/"
+        f"{SHAREPOINT_HOST}:{SHAREPOINT_SITE_PATH}"
+    )
+    headers = {"Authorization": f"Bearer {access_token}"}
+    resp = requests.get(url, headers=headers)
+    if resp.status_code != 200:
+        raise RuntimeError(
+            f"サイトID取得失敗: {resp.status_code}\n{resp.text[:300]}"
+        )
+    site_id = resp.json()["id"]
+    print(f"  サイトID: {site_id}")
+    return site_id
+
+
 def authenticate_and_upload(
     json_path: Path, client_id: str, tenant_id: str
-) -> tuple[str, str]:
-    """MSAL デバイスコードフローで認証し、OneDrive にアップロードする。"""
+) -> tuple[str, str, str]:
+    """MSAL デバイスコードフローで認証し、SharePoint にアップロードする。"""
     try:
         import msal
         import requests
     except ImportError:
-        print("ERROR: msal が未インストールです")
+        print("ERROR: msal / requests が未インストールです")
         print("  pip install msal requests")
         sys.exit(1)
 
@@ -99,17 +120,16 @@ def authenticate_and_upload(
 
     scopes = ["Files.ReadWrite", "offline_access"]
 
-    # --- デバイスコードフロー（ブラウザでサインイン）---
+    # --- デバイスコードフロー ---
     flow = app.initiate_device_flow(scopes=scopes)
     if "user_code" not in flow:
         raise RuntimeError(f"デバイスフロー開始失敗: {flow}")
 
     print("\n" + "=" * 60)
-    print(flow["message"])  # 「ブラウザで ... を開いてコード ... を入力してください」
+    print(flow["message"])
     print("=" * 60)
 
     result = app.acquire_token_by_device_flow(flow)
-
     if "error" in result:
         raise RuntimeError(
             f"認証失敗: {result.get('error')}: {result.get('error_description')}"
@@ -119,11 +139,14 @@ def authenticate_and_upload(
     refresh_token = result["refresh_token"]
     print("\n認証成功 ✓")
 
-    # --- OneDrive にアップロード ---
-    filename = "counseling_knowledge.json"
+    # --- SharePoint サイトID を取得 ---
+    print("\nSharePoint サイトID を取得中...")
+    site_id = get_site_id(access_token, requests)
+
+    # --- SharePoint にアップロード ---
     upload_url = (
-        f"https://graph.microsoft.com/v1.0/me/drive/root:"
-        f"/mental-health-chat/{filename}:/content"
+        f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:"
+        f"/{UPLOAD_FOLDER}/{FILENAME}:/content"
     )
     headers = {
         "Authorization": f"Bearer {access_token}",
@@ -134,7 +157,8 @@ def authenticate_and_upload(
         content = f.read()
 
     size_mb = len(content) / 1024 / 1024
-    print(f"\nOneDrive にアップロード中 ({size_mb:.1f} MB)...")
+    print(f"\nSharePoint にアップロード中 ({size_mb:.1f} MB)...")
+    print(f"  宛先: {UPLOAD_FOLDER}/{FILENAME}")
 
     resp = requests.put(upload_url, headers=headers, data=content)
     if resp.status_code not in (200, 201):
@@ -146,12 +170,12 @@ def authenticate_and_upload(
     file_id = item["id"]
     print(f"アップロード完了 ✓  ファイルID: {file_id}")
 
-    return file_id, refresh_token
+    return site_id, file_id, refresh_token
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description="ChromaDB → OneDrive RAG エクスポート"
+        description="ChromaDB → SharePoint RAG エクスポート"
     )
     parser.add_argument(
         "--chroma-path", default="./data/chroma_db", help="ChromaDB パス"
@@ -187,9 +211,9 @@ def main():
         json.dump(data, f, ensure_ascii=False, indent=2)
     print(f"保存: {output_path}")
 
-    # 2. OneDrive アップロード
-    print("\n【Step 2】OneDrive アップロード")
-    file_id, refresh_token = authenticate_and_upload(
+    # 2. SharePoint アップロード
+    print("\n【Step 2】SharePoint アップロード")
+    site_id, file_id, refresh_token = authenticate_and_upload(
         output_path, args.client_id, args.tenant_id
     )
 
@@ -198,10 +222,11 @@ def main():
     print("Vercel に以下の環境変数を設定してください:")
     print("（Settings → Environment Variables）")
     print("=" * 60)
+    print(f"SHAREPOINT_SITE_ID={site_id}")
+    print(f"ONEDRIVE_FILE_ID={file_id}")
     print(f"ONEDRIVE_TENANT_ID={args.tenant_id}")
     print(f"ONEDRIVE_CLIENT_ID={args.client_id}")
     print(f"ONEDRIVE_REFRESH_TOKEN={refresh_token}")
-    print(f"ONEDRIVE_FILE_ID={file_id}")
     print("=" * 60)
     print("\n設定後に Vercel で Redeploy を実行してください。")
 

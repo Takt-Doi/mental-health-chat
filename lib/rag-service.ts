@@ -78,8 +78,14 @@ async function loadKnowledgeBase(): Promise<KnowledgeChunk[]> {
 
   const token = await refreshAccessToken()
 
+  // SharePoint サイト指定があれば sites/{siteId}/drive、なければ個人 OneDrive
+  const siteId = process.env.SHAREPOINT_SITE_ID
+  const driveBase = siteId
+    ? `https://graph.microsoft.com/v1.0/sites/${siteId}/drive`
+    : `https://graph.microsoft.com/v1.0/me/drive`
+
   const res = await fetch(
-    `https://graph.microsoft.com/v1.0/me/drive/items/${fileId}/content`,
+    `${driveBase}/items/${fileId}/content`,
     { headers: { Authorization: `Bearer ${token}` } }
   )
 
